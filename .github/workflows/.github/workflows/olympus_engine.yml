@@ -15,15 +15,18 @@ on:
 jobs:
   orchestrator:
     runs-on: ubuntu-latest
-    outputs:
-      recon_results_path: ${{ steps.recon.outputs.recon_results_path }}
     steps:
       - name: Checkout Olympus Codebase
         uses: actions/checkout@v4
 
+      - name: Install Go for Recon Tools
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
       - name: 🚀 [Module] Basic Reconnaissance
         id: recon
-        if: contains(github.event.inputs.modules, 'recon')
+        if: "contains(github.event.inputs.modules, 'recon')"
         run: |
           echo "Starting Basic Reconnaissance module for ${{ github.event.inputs.target }}..."
           chmod +x modules/recon/run.sh
@@ -31,9 +34,9 @@ jobs:
           echo "recon_results_path=recon_results/${{ github.event.inputs.target }}" >> $GITHUB_OUTPUT
 
       - name: 🧠 [Brain] Storing Recon Artifacts
-        if: always() && contains(github.event.inputs.modules, 'recon')
+        if: "always() && contains(github.event.inputs.modules, 'recon')"
         uses: actions/upload-artifact@v4
         with:
           name: recon-results-${{ github.event.inputs.target }}
-          path: ${{ steps.recon.outputs.recon_results_path }}/
+          path: recon_results/${{ github.event.inputs.target }}/
 
