@@ -1,4 +1,4 @@
-name: Olympus Engine v1.0 - "The Awakening"
+name: Olympus Engine v2.0 - "The All-Seeing"
 
 on:
   workflow_dispatch:
@@ -8,9 +8,9 @@ on:
         required: true
         default: 'tesla.com'
       modules:
-        description: 'Comma-separated list of modules to run (e.g., recon)'
+        description: 'Comma-separated list of modules (recon,vuln_scan)'
         required: true
-        default: 'recon'
+        default: 'recon,vuln_scan'
 
 jobs:
   orchestrator:
@@ -19,7 +19,7 @@ jobs:
       - name: Checkout Olympus Codebase
         uses: actions/checkout@v4
 
-      - name: Install Go for Recon Tools
+      - name: Install Go for Tools
         uses: actions/setup-go@v5
         with:
           go-version: '1.21'
@@ -33,9 +33,17 @@ jobs:
           ./modules/recon/run.sh ${{ github.event.inputs.target }}
           echo "recon_results_path=recon_results/${{ github.event.inputs.target }}" >> $GITHUB_OUTPUT
 
-      - name: 🧠 [Brain] Storing Recon Artifacts
-        if: "always() && contains(github.event.inputs.modules, 'recon')"
+      - name: 👁️ [Module] Vulnerability Scanning
+        id: vuln_scan
+        if: "contains(github.event.inputs.modules, 'vuln_scan')"
+        run: |
+          echo "Starting Vulnerability Scanning module for ${{ github.event.inputs.target }}..."
+          chmod +x modules/vuln_scan/run.sh
+          ./modules/vuln_scan/run.sh ${{ github.event.inputs.target }}
+
+      - name: 🧠 [Brain] Storing All Artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: recon-results-${{ github.event.inputs.target }}
+          name: olympus-results-${{ github.event.inputs.target }}
           path: recon_results/${{ github.event.inputs.target }}/
