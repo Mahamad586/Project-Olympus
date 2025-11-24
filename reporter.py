@@ -1,13 +1,14 @@
 import os
 import requests
 import sys
+import subprocess
 
-def send_discord_notification(webhook_url, message):
+def send_discord_notification(webhook_url, embed):
     if not webhook_url:
         print("[WARN] Discord webhook URL is not set. Skipping notification.")
         return
         
-    data = {"content": message}
+    data = {"embeds": [embed]}
     try:
         response = requests.post(webhook_url, json=data)
         response.raise_for_status()
@@ -15,46 +16,62 @@ def send_discord_notification(webhook_url, message):
     except requests.exceptions.RequestException as e:
         print(f"[ERR] Failed to send Discord notification: {e}")
 
-def analyze_and_report(target, webhook_url):
-    report_parts = [f"## 🏛️ Olympus Report for: `{target}`"]
-    base_path = "recon_results"
+def run_ai_analysis(findings_file):
+    if not os.path.exists(findings_file) or os.path.getsize(findings_file) == 0:
+        return "No findings file to analyze.", "info"
         
-    # Find the latest timestamped directory for the target
-    target_path = os.path.join(base_path, target)
+    try:
+        # We need to call the ai_analyzer.py script
+        process = subprocess.run(
+            ['python', 'ai_analyzer.py', findings_file],
+            capture_output=True, text=True, check=True
+        )
+        return process.stdout.strip(), "critical"
+    except subprocess.CalledProcessError as e:
+        return f"AI analysis script failed: {e.stderr}", "error"
+    except FileNotFoundError:
+        return "ai_analyzer.py not found.", "error"
+
+
+def analyze_and_report(target, webhook_url):
+    embed = {
+        "title": f"🏛️ Olympus AI Report: `{target}`",
+        "color": 0xaaaaaa, # Grey by default
+        "fields": []
+    }
+
+    target_path = os.path.join("recon_results", target)
     if not os.path.exists(target_path):
-        report_parts.append("❌ No results directory found. The workflow might have failed early.")
-        send_discord_notification(webhook_url, "\n".join(report_parts))
+        embed["description"] = "❌ No results directory found. The workflow might have failed early."
+        embed["color"] = 0xff0000 # Red
+        send_discord_notification(webhook_url, embed)
         return
 
     all_dirs = [os.path.join(target_path, d) for d in os.listdir(target_path) if os.path.isdir(os.path.join(target_path, d))]
     if not all_dirs:
-        report_parts.append("❌ No timestamped result directory found inside the target folder.")
-        send_discord_notification(webhook_url, "\n".join(report_parts))
+        embed["description"] = "❌ No timestamped result directory found."
+        embed["color"] = 0xff0000 # Red
+        send_discord_notification(webhook_url, embed)
         return
             
     latest_dir = max(all_dirs, key=os.path.getmtime)
-    report_parts.append(f"📁 Results Path: `{latest_dir}`")
-
-    # Check Nuclei findings
+        
     nuclei_file = os.path.join(latest_dir, "nuclei_findings.txt")
-    if os.path.exists(nuclei_file) and os.path.getsize(nuclei_file) > 0:
-        with open(nuclei_file, 'r') as f:
-            findings = f.readlines()
-            
-        high_critical_findings = [line.strip() for line in findings if "[high]" in line or "[critical]" in line]
-            
-        if high_critical_findings:
-            report_parts.append("\n**🚨 HIGH/CRITICAL VULNERABILITIES FOUND! 🚨**")
-            for finding in high_critical_findings:
-                report_parts.append(f"```{finding}```")
-        else:
-            report_parts.append("\n✅ No high/critical vulnerabilities found by Nuclei.")
-            report_parts.append(f"Total findings: {len(findings)}")
-    else:
-        report_parts.append("\n⚠️ Nuclei findings file is empty or missing.")
+        
+    ai_summary, status = run_ai_analysis(nuclei_file)
 
-    final_report = "\n".join(report_parts)
-    send_discord_notification(webhook_url, final_report)
+    embed["fields"].append({"name": "🧠 AI Summary", "value": f"```{ai_summary}```"})
+
+    if status == "critical" and "No significant" not in ai_summary:
+        embed["color"] = 0xffd700 # Gold
+        embed["description"] = "🚨 **Potential High-Impact Vulnerability Identified!**"
+    elif status == "error":
+        embed["color"] = 0xff0000 # Red
+    else:
+        embed["color"] = 0x00ff00 # Green
+        embed["description"] = "✅ Scan complete. No critical issues flagged by AI."
+
+    send_discord_notification(webhook_url, embed)
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
