@@ -1,7 +1,11 @@
-name: Olympus Engine v3.0 - "The Relentless"
+name: Olympus Engine v4.0 - "The Versatile"
 
 on:
   workflow_dispatch:
+    inputs:
+      target:
+        description: 'Run on a single target (optional)'
+        required: false
   schedule:
     - cron: '0 */6 * * *' # Runs every 6 hours
 
@@ -11,7 +15,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: ${{ fromJson(needs.read_targets.outputs.targets_json) }}
+        # If a single target is provided, use it. Otherwise, use the full list.
+        target: ${{ github.event.inputs.target && fromJson(format('["{0}"]', github.event.inputs.target)) || fromJson(needs.read_targets.outputs.targets_json) }}
     needs: read_targets
     steps:
       - name: Checkout Olympus Codebase
@@ -39,6 +44,11 @@ jobs:
         run: |
           chmod +x modules/vuln_scan/run.sh
           ./modules/vuln_scan/run.sh ${{ matrix.target }}
+          
+      - name: 📱 [Module] Android App Analysis
+        run: |
+          chmod +x modules/android_scan/run.sh
+          ./modules/android_scan/run.sh ${{ matrix.target }}
 
       - name: 🗣️ [Module] Analyze and Report to Discord
         if: always()
