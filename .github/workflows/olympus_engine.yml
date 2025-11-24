@@ -1,49 +1,61 @@
-name: Olympus Engine v2.0 - "The All-Seeing"
+name: Olympus Engine v3.0 - "The Relentless"
 
 on:
   workflow_dispatch:
-    inputs:
-      target:
-        description: 'The primary target domain (e.g., tesla.com)'
-        required: true
-        default: 'tesla.com'
-      modules:
-        description: 'Comma-separated list of modules (recon,vuln_scan)'
-        required: true
-        default: 'recon,vuln_scan'
+  schedule:
+    - cron: '0 */6 * * *' # Runs every 6 hours
 
 jobs:
-  orchestrator:
+  unleash_the_kraken:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJson(needs.read_targets.outputs.targets_json) }}
+    needs: read_targets
     steps:
       - name: Checkout Olympus Codebase
         uses: actions/checkout@v4
 
-      - name: Install Go for Tools
+      - name: Install Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.21'
 
-      - name: 🚀 [Module] Basic Reconnaissance
-        id: recon
-        if: "contains(github.event.inputs.modules, 'recon')"
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Python Dependencies
+        run: pip install requests
+
+      - name: 🚀 [Module] Reconnaissance
         run: |
-          echo "Starting Basic Reconnaissance module for ${{ github.event.inputs.target }}..."
           chmod +x modules/recon/run.sh
-          ./modules/recon/run.sh ${{ github.event.inputs.target }}
-          echo "recon_results_path=recon_results/${{ github.event.inputs.target }}" >> $GITHUB_OUTPUT
+          ./modules/recon/run.sh ${{ matrix.target }}
 
       - name: 👁️ [Module] Vulnerability Scanning
-        id: vuln_scan
-        if: "contains(github.event.inputs.modules, 'vuln_scan')"
         run: |
-          echo "Starting Vulnerability Scanning module for ${{ github.event.inputs.target }}..."
           chmod +x modules/vuln_scan/run.sh
-          ./modules/vuln_scan/run.sh ${{ github.event.inputs.target }}
+          ./modules/vuln_scan/run.sh ${{ matrix.target }}
 
-      - name: 🧠 [Brain] Storing All Artifacts
+      - name: 🗣️ [Module] Analyze and Report to Discord
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: olympus-results-${{ github.event.inputs.target }}
-          path: recon_results/${{ github.event.inputs.target }}/
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          python reporter.py ${{ matrix.target }}
+
+  read_targets:
+    runs-on: ubuntu-latest
+    outputs:
+      targets_json: ${{ steps.read_targets_file.outputs.targets_json }}
+    steps:
+      - name: Checkout Olympus Codebase
+        uses: actions/checkout@v4
+      - id: read_targets_file
+        name: Read targets.txt into a JSON array
+        run: |
+          targets_json=$(jq -R -s -c 'split("\n") | map(select(length > 0))' targets.txt)
+          echo "targets_json=$targets_json" >> $GITHUB_OUTPUT
