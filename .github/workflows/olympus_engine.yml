@@ -1,0 +1,41 @@
+name: Olympus Engine v1.0 - "The Awakening"
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'The primary target domain (e.g., tesla.com)'
+        required: true
+        default: 'tesla.com'
+      modules:
+        description: 'Comma-separated list of modules to run (e.g., recon)'
+        required: true
+        default: 'recon'
+
+jobs:
+  orchestrator:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Olympus Codebase
+        uses: actions/checkout@v4
+
+      - name: Install Go for Recon Tools
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: 🚀 [Module] Basic Reconnaissance
+        id: recon
+        if: "contains(github.event.inputs.modules, 'recon')"
+        run: |
+          echo "Starting Basic Reconnaissance module for ${{ github.event.inputs.target }}..."
+          chmod +x modules/recon/run.sh
+          ./modules/recon/run.sh ${{ github.event.inputs.target }}
+          echo "recon_results_path=recon_results/${{ github.event.inputs.target }}" >> $GITHUB_OUTPUT
+
+      - name: 🧠 [Brain] Storing Recon Artifacts
+        if: "always() && contains(github.event.inputs.modules, 'recon')"
+        uses: actions/upload-artifact@v4
+        with:
+          name: recon-results-${{ github.event.inputs.target }}
+          path: recon_results/${{ github.event.inputs.target }}/
