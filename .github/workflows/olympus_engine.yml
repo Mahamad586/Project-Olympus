@@ -1,71 +1,102 @@
-name: Olympus Engine v4.0 - "The Versatile"
+name: Olympus Engine v5.0 - "The Legend"
 
 on:
   workflow_dispatch:
-    inputs:
-      target:
-        description: 'Run on a single target (optional)'
-        required: false
   schedule:
-    - cron: '0 */6 * * *' # Runs every 6 hours
+    - cron: '0 */6 * * *'
+  push:
+    branches:
+      - main
 
 jobs:
-  unleash_the_kraken:
+  # This job runs all the security tools
+  scan_job:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        # If a single target is provided, use it. Otherwise, use the full list.
-        target: ${{ github.event.inputs.target && fromJson(format('["{0}"]', github.event.inputs.target)) || fromJson(needs.read_targets.outputs.targets_json) }}
+        target: ${{ fromJson(needs.read_targets.outputs.targets_json) }}
     needs: read_targets
     steps:
-      - name: Checkout Olympus Codebase
-        uses: actions/checkout@v4
-
-      - name: Install Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
-
-      - name: Install Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-
-      - name: Install Python Dependencies
-        run: pip install requests
-
-      - name: 🚀 [Module] Reconnaissance
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.21' }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.10' }
+      - run: pip install requests
+      - name: 🚀 Recon
         run: |
           chmod +x modules/recon/run.sh
           ./modules/recon/run.sh ${{ matrix.target }}
-
-      - name: 👁️ [Module] Vulnerability Scanning
+      - name: 👁️ Vuln Scan
         run: |
           chmod +x modules/vuln_scan/run.sh
           ./modules/vuln_scan/run.sh ${{ matrix.target }}
-          
-      - name: 📱 [Module] Android App Analysis
-        run: |
-          chmod +x modules/android_scan/run.sh
-          ./modules/android_scan/run.sh ${{ matrix.target }}
-
-      - name: 🗣️ [Module] Analyze and Report to Discord
+      - name: 🗣️ Report
         if: always()
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DEEPINFRA_API_TOKEN: ${{ secrets.DEEPINFRA_API_TOKEN }}
+        run: python reporter.py ${{ matrix.target }}
+      - name: 🧠 Store Results for Dashboard
+        if: always()
         run: |
-          python reporter.py ${{ matrix.target }}
+          # This step creates a small JSON file with the result of this specific job
+          LATEST_DIR=$(ls -td recon_results/${{ matrix.target }}/*/ | head -1)
+          AI_SUMMARY=$(python ai_analyzer.py $LATEST_DIR/nuclei_findings.txt)
+          STATUS="ok"
+          if [[ "$AI_SUMMARY" == *"Potential"* || "$AI_SUMMARY" == *"critical"* ]]; then
+            STATUS="critical"
+          fi
+          echo "{\"target\": \"${{ matrix.target }}\", \"ai_summary\": \"$AI_SUMMARY\", \"status\": \"$STATUS\"}" > result.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: job-result-${{ matrix.target }}
+          path: result.json
+
+  # This job collects all results and builds the dashboard
+  build_dashboard:
+    runs-on: ubuntu-latest
+    needs: scan_job
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all job results
+        uses: actions/download-artifact@v4
+        with:
+          path: all-results
+      - name: 🏗️ Build Dashboard Data
+        id: build_data
+        run: |
+          echo '{"summary": {"total_targets": 0, "critical_findings_count": 0, "last_update": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}, "results": []}' > dashboard_data.json
+          CRITICAL_COUNT=0
+          TARGET_COUNT=0
+          for dir in all-results/job-result-*; do
+            if [ -f "$dir/result.json" ]; then
+              TARGET_COUNT=$((TARGET_COUNT + 1))
+              CONTENT=$(cat "$dir/result.json")
+              if echo "$CONTENT" | grep -q '"status": "critical"'; then
+                CRITICAL_COUNT=$((CRITICAL_COUNT + 1))
+              fi
+              jq --argjson content "$CONTENT" '.results += [$content]' dashboard_data.json > tmp.json && mv tmp.json dashboard_data.json
+            fi
+          done
+          jq ".summary.total_targets = $TARGET_COUNT | .summary.critical_findings_count = $CRITICAL_COUNT" dashboard_data.json > tmp.json && mv tmp.json dashboard_data.json
+          echo "Dashboard data built."
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: .
+          # This will publish index.html, style.css, script.js, and dashboard_data.json
 
   read_targets:
     runs-on: ubuntu-latest
     outputs:
       targets_json: ${{ steps.read_targets_file.outputs.targets_json }}
     steps:
-      - name: Checkout Olympus Codebase
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
       - id: read_targets_file
-        name: Read targets.txt into a JSON array
         run: |
           targets_json=$(jq -R -s -c 'split("\n") | map(select(length > 0))' targets.txt)
           echo "targets_json=$targets_json" >> $GITHUB_OUTPUT
